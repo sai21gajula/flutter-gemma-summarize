@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter/foundation.dart';
 import 'package:provider/provider.dart';
+import 'dart:async';
 import '../providers/notes_provider.dart';
 import '../models/note.dart';
 import '../services/gemma_service.dart';
@@ -21,6 +23,8 @@ class _NoteEditorScreenState extends State<NoteEditorScreen> {
   bool _hasChanges = false;
   String? _selectedText;
   bool _isPerformingAI = false;
+  Timer? _selectionCheckTimer;
+  bool _isPointerDown = false;
 
   @override
   void initState() {
@@ -34,10 +38,16 @@ class _NoteEditorScreenState extends State<NoteEditorScreen> {
     _titleController.addListener(_onTextChanged);
     _contentController.addListener(_onTextChanged);
     _tagsController.addListener(_onTextChanged);
+    
+    // Start periodic selection checking for web platform
+    if (kIsWeb) {
+      _startSelectionPolling();
+    }
   }
 
   @override
   void dispose() {
+    _selectionCheckTimer?.cancel();
     _titleController.dispose();
     _contentController.dispose();
     _tagsController.dispose();
@@ -50,6 +60,25 @@ class _NoteEditorScreenState extends State<NoteEditorScreen> {
         _hasChanges = true;
       });
     }
+  }
+
+  void _startSelectionPolling() {
+    _selectionCheckTimer = Timer.periodic(
+      const Duration(milliseconds: 500),
+      (_) => _updateSelectedText(),
+    );
+  }
+
+  void _onPointerDown() {
+    _isPointerDown = true;
+  }
+
+  void _onPointerUp() {
+    _isPointerDown = false;
+    // Check selection after pointer up with a delay
+    Future.delayed(const Duration(milliseconds: 100), () {
+      _updateSelectedText();
+    });
   }
 
   @override
@@ -134,22 +163,33 @@ class _NoteEditorScreenState extends State<NoteEditorScreen> {
                         topLeft: Radius.circular(8),
                         topRight: Radius.circular(8),
                       ),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withOpacity(0.04),
+                          blurRadius: 4,
+                          offset: const Offset(0, 2),
+                        ),
+                      ],
                     ),
                     child: Row(
                       children: [
+                        Icon(Icons.auto_awesome, color: Theme.of(context).colorScheme.primary, size: 20),
+                        const SizedBox(width: 6),
                         Text(
-                          'AI Tools:',
-                          style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          'AI Tools',
+                          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                             fontWeight: FontWeight.bold,
+                            color: Theme.of(context).colorScheme.primary,
                           ),
                         ),
-                        const SizedBox(width: 8),
+                        const SizedBox(width: 12),
                         if (_selectedText != null && _selectedText!.isNotEmpty)
-                          Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                          AnimatedContainer(
+                            duration: const Duration(milliseconds: 200),
+                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                             decoration: BoxDecoration(
                               color: Theme.of(context).colorScheme.primaryContainer,
-                              borderRadius: BorderRadius.circular(12),
+                              borderRadius: BorderRadius.circular(16),
                             ),
                             child: Text(
                               '${_selectedText!.length} chars selected',
@@ -158,7 +198,7 @@ class _NoteEditorScreenState extends State<NoteEditorScreen> {
                               ),
                             ),
                           ),
-                        const SizedBox(width: 8),
+                        const SizedBox(width: 12),
                         ...AIOperationType.values.map((operation) =>
                           Padding(
                             padding: const EdgeInsets.only(right: 4),
@@ -166,30 +206,39 @@ class _NoteEditorScreenState extends State<NoteEditorScreen> {
                           ),
                         ),
                         const Spacer(),
-                        // Test selection button for debugging
                         if (_selectedText != null && _selectedText!.isNotEmpty)
-                          TextButton(
-                            onPressed: () {
-                              showDialog(
-                                context: context,
-                                builder: (context) => AlertDialog(
-                                  title: const Text('Selected Text'),
-                                  content: Text('Selected: "${_selectedText!}"'),
-                                  actions: [
-                                    TextButton(
-                                      onPressed: () => Navigator.pop(context),
-                                      child: const Text('OK'),
-                                    ),
-                                  ],
-                                ),
-                              );
-                            },
-                            child: const Text('Test', style: TextStyle(fontSize: 10)),
+                          Tooltip(
+                            message: 'Show selected text',
+                            child: IconButton(
+                              icon: const Icon(Icons.visibility, size: 18),
+                              onPressed: () {
+                                showDialog(
+                                  context: context,
+                                  builder: (context) => AlertDialog(
+                                    title: const Text('Selected Text'),
+                                    content: Text('Selected: "${_selectedText!}"'),
+                                    actions: [
+                                      TextButton(
+                                        onPressed: () => Navigator.pop(context),
+                                        child: const Text('OK'),
+                                      ),
+                                    ],
+                                  ),
+                                );
+                              },
+                            ),
                           ),
+                        Tooltip(
+                          message: 'Help with text selection',
+                          child: IconButton(
+                            icon: const Icon(Icons.help_outline, size: 18),
+                            onPressed: _showSelectionHelp,
+                          ),
+                        ),
                         if (_isPerformingAI)
                           const SizedBox(
-                            width: 16,
-                            height: 16,
+                            width: 20,
+                            height: 20,
                             child: CircularProgressIndicator(strokeWidth: 2),
                           ),
                       ],
@@ -198,29 +247,31 @@ class _NoteEditorScreenState extends State<NoteEditorScreen> {
 
                   // Content TextField
                   Expanded(
-                    child: TextField(
-                      controller: _contentController,
-                      decoration: const InputDecoration(
-                        hintText: 'Start writing your note...\n\nSelect text and use AI tools above to enhance your content.',
-                        border: InputBorder.none,
-                        contentPadding: EdgeInsets.all(16),
+                    child: Listener(
+                      onPointerDown: (_) => _onPointerDown(),
+                      onPointerUp: (_) => _onPointerUp(),
+                      child: TextField(
+                        controller: _contentController,
+                        decoration: const InputDecoration(
+                          hintText: 'Start writing your note...\n\nSelect text and use AI tools above to enhance your content.',
+                          border: InputBorder.none,
+                          contentPadding: EdgeInsets.all(16),
+                        ),
+                        style: Theme.of(context).textTheme.bodyLarge,
+                        maxLines: null,
+                        expands: true,
+                        textAlignVertical: TextAlignVertical.top,
+                        onTap: () {
+                          // Multiple selection check attempts for web compatibility
+                          Future.delayed(const Duration(milliseconds: 50), _updateSelectedText);
+                          Future.delayed(const Duration(milliseconds: 200), _updateSelectedText);
+                          Future.delayed(const Duration(milliseconds: 500), _updateSelectedText);
+                        },
+                        onChanged: (_) {
+                          // Check selection after text changes
+                          Future.delayed(const Duration(milliseconds: 100), _updateSelectedText);
+                        },
                       ),
-                      style: Theme.of(context).textTheme.bodyLarge,
-                      maxLines: null,
-                      expands: true,
-                      textAlignVertical: TextAlignVertical.top,
-                      onTap: () {
-                        // Delay to allow selection to complete
-                        Future.delayed(const Duration(milliseconds: 100), _updateSelectedText);
-                      },
-                      onChanged: (_) {
-                        // Delay to allow selection to complete
-                        Future.delayed(const Duration(milliseconds: 100), _updateSelectedText);
-                      },
-                      onSelectionChanged: (TextSelection selection, SelectionChangedCause? cause) {
-                        // This is called when text selection changes
-                        Future.delayed(const Duration(milliseconds: 50), _updateSelectedText);
-                      },
                     ),
                   ),
                 ],
@@ -231,6 +282,23 @@ class _NoteEditorScreenState extends State<NoteEditorScreen> {
           const SizedBox(height: 16),
         ],
       ),
+      floatingActionButton: kIsWeb && kDebugMode
+          ? FloatingActionButton.small(
+              onPressed: () {
+                _updateSelectedText();
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text(_selectedText != null
+                        ? 'Selected: "${_selectedText!.substring(0, _selectedText!.length > 30 ? 30 : _selectedText!.length)}..."'
+                        : 'No text selected'),
+                    duration: const Duration(seconds: 2),
+                  ),
+                );
+              },
+              child: const Icon(Icons.refresh),
+              tooltip: 'Check Selection',
+            )
+          : null,
     );
   }
 
@@ -267,22 +335,118 @@ class _NoteEditorScreenState extends State<NoteEditorScreen> {
   }
 
   void _updateSelectedText() {
-    final selection = _contentController.selection;
-    if (selection.isValid && !selection.isCollapsed) {
-      final selectedText = _contentController.text.substring(
-        selection.start,
-        selection.end,
-      );
-      if (selectedText.trim().isNotEmpty) {
+    if (!mounted) return;
+    
+    try {
+      final selection = _contentController.selection;
+      
+      // Debug: Print selection info
+      if (kDebugMode && kIsWeb) {
+        print('Selection: start=${selection.start}, end=${selection.end}, isValid=${selection.isValid}, isCollapsed=${selection.isCollapsed}');
+      }
+      
+      if (selection.isValid && !selection.isCollapsed) {
+        final selectedText = _contentController.text.substring(
+          selection.start,
+          selection.end,
+        );
+        
+        if (selectedText.trim().isNotEmpty) {
+          if (_selectedText != selectedText) {
+            setState(() {
+              _selectedText = selectedText;
+            });
+            if (kDebugMode) {
+              print('Selected text updated: "${selectedText.substring(0, selectedText.length > 50 ? 50 : selectedText.length)}..."');
+            }
+          }
+          return;
+        }
+      }
+      
+      // Clear selection if no valid selection found
+      if (_selectedText != null) {
         setState(() {
-          _selectedText = selectedText;
+          _selectedText = null;
         });
-        return;
+        if (kDebugMode) {
+          print('Selection cleared');
+        }
+      }
+    } catch (e) {
+      if (kDebugMode) {
+        print('Error updating selected text: $e');
       }
     }
-    setState(() {
-      _selectedText = null;
-    });
+  }
+
+  void _showSelectionHelp() {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Row(
+          children: [
+            Icon(Icons.help_outline),
+            SizedBox(width: 8),
+            Text('Text Selection Help'),
+          ],
+        ),
+        content: SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text(
+                'How to select text for AI operations:',
+                style: TextStyle(fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 12),
+              if (kIsWeb) ...[
+                const Text('🌐 Web Browser:'),
+                const SizedBox(height: 4),
+                const Text('• Click and drag to select text\n• Double-click to select a word\n• Triple-click to select a line'),
+                const SizedBox(height: 12),
+                const Text(
+                  'Note: Text selection detection on web may take a moment. The selection indicator will appear when text is detected.',
+                  style: TextStyle(fontStyle: FontStyle.italic, fontSize: 12),
+                ),
+              ] else ...[
+                const Text('📱 Mobile/Desktop:'),
+                const SizedBox(height: 4),
+                const Text('• Tap and drag to select text\n• Double-tap to select a word\n• Use selection handles to adjust'),
+              ],
+              const SizedBox(height: 16),
+              const Text(
+                'Once text is selected:',
+                style: TextStyle(fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 4),
+              const Text('• AI tool buttons will become enabled\n• Click any AI tool (📝 ✨ 📖 📈 💡) to process the selected text\n• Choose to replace the original text or insert the result after it'),
+              if (_selectedText != null && _selectedText!.isNotEmpty) ...[
+                const SizedBox(height: 16),
+                Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: Theme.of(context).colorScheme.primaryContainer,
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Text(
+                    'Currently selected: "${_selectedText!.length > 50 ? '${_selectedText!.substring(0, 50)}...' : _selectedText!}"',
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Got it!'),
+          ),
+        ],
+      ),
+    );
   }
 
   Future<void> _performAIOperation(AIOperationType operation) async {
@@ -295,37 +459,29 @@ class _NoteEditorScreenState extends State<NoteEditorScreen> {
       );
       return;
     }
-
     setState(() {
       _isPerformingAI = true;
     });
-
     try {
-      print('[NoteEditor] Performing ${operation.displayName} on: "${_selectedText!.substring(0, _selectedText!.length > 50 ? 50 : _selectedText!.length)}..."');
-      
       final notesProvider = context.read<NotesProvider>();
       final result = await notesProvider.performAIOperation(
         _selectedText!,
         operation,
       );
-
-      print('[NoteEditor] AI operation successful. Result length: ${result.length}');
-
-      // Show result dialog
       if (mounted) {
         _showAIResultDialog(operation, result);
       }
     } catch (e) {
-      print('[NoteEditor] AI operation failed: $e');
+      // Show a more user-friendly error for web/proxy issues
+      final isWeb = identical(0, 0.0);
+      final errorMsg = e.toString().contains('proxy')
+        ? 'AI tools require a proxy server for web. Please see the README.'
+        : e.toString();
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('AI operation failed: $e'),
-            duration: const Duration(seconds: 5),
-            action: SnackBarAction(
-              label: 'Retry',
-              onPressed: () => _performAIOperation(operation),
-            ),
+            content: Text('AI operation failed: $errorMsg'),
+            duration: const Duration(seconds: 6),
           ),
         );
       }

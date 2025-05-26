@@ -1,0 +1,26 @@
+{
+  "name": "gemma-proxy-server",
+  "version": "1.0.0",
+  "description": "Proxy server for Flutter Gemma app to handle CORS",
+  "main": "proxy-server.js",
+  "scripts": {
+    "start": "node proxy-server.js",
+    "dev": "nodemon proxy-server.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^4.18.2",
+    "node-fetch": "^2.7.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.1"
+  },
+  "keywords": [
+    "proxy",
+    "flutter",
+    "gemma",
+    "cors"
+  ],
+  "author": "Flutter Gemma App",
+  "license": "MIT"
+}

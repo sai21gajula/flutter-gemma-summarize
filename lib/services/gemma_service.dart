@@ -36,90 +36,133 @@ class GemmaService {
   }
 
   Future<String> performAIOperation(String text, AIOperationType operationType) async {
-    // Check if API key is configured
     if (!ApiConfig.isApiKeyConfigured) {
       throw Exception('API key not configured. Please add your API key in lib/config/api_config.dart');
     }
 
     try {
-      // Create the prompt based on operation type
       final prompt = '${operationType.prompt}\n\n$text';
-      
-      // Adjust generation config based on operation type
       final generationConfig = _getGenerationConfig(operationType);
+      final isWeb = kIsWeb;
       
       if (kDebugMode) {
-        print('[GemmaService] Making API request to: ${ApiConfig.baseUrl}/models/${ApiConfig.modelName}:generateContent');
-        print('[GemmaService] Prompt: $prompt');
+        print('[GemmaService] Making API request');
+        print('[GemmaService] Platform: ${isWeb ? 'Web' : 'Native'}');
+        print('[GemmaService] Using model: ${ApiConfig.modelName}');
+        print('[GemmaService] Operation: ${operationType.name}');
+        print('[GemmaService] Text length: ${text.length}');
       }
+
+      Response response;
       
-      // Using Google AI Studio Gemini API
-      final response = await _dio.post(
-        '/models/${ApiConfig.modelName}:generateContent?key=${ApiConfig.gemmaApiKey}',
-        data: {
-          'contents': [
-            {
-              'parts': [
-                {
-                  'text': prompt
-                }
-              ]
-            }
-          ],
-          'generationConfig': generationConfig,
-        },
-      );
-      
-      if (kDebugMode) {
-        print('[GemmaService] Response status: ${response.statusCode}');
-        print('[GemmaService] Response data: ${response.data}');
+      if (isWeb) {
+        // For web, attempt direct API call (will demonstrate CORS issue)
+        // Commenting out proxy server code for testing
+        // final proxyUrl = 'http://localhost:3001/api/gemma';
+        
+        // try {
+        //   response = await Dio().post(
+        //     proxyUrl,
+        //     data: {
+        //       'apiKey': ApiConfig.gemmaApiKey,
+        //       'model': ApiConfig.modelName,
+        //       'contents': [
+        //         {
+        //           'parts': [
+        //             {'text': prompt}
+        //           ]
+        //         }
+        //       ],
+        //       'generationConfig': generationConfig,
+        //     },
+        //     options: Options(
+        //       headers: {
+        //         'Content-Type': 'application/json',
+        //       },
+        //     ),
+        //   );
+        // } catch (e) {
+        //   throw Exception('Web platform detected. Please start the proxy server with "npm start" in the project directory. Error: ${e.toString()}');
+        // }
+
+        // Direct API call for web (will likely cause CORS error)
+        final endpoint = '/models/${ApiConfig.modelName}:generateContent?key=${ApiConfig.gemmaApiKey}';
+        
+        if (kDebugMode) {
+          print('[GemmaService] Attempting DIRECT API call from Web to: ${ApiConfig.baseUrl}$endpoint');
+        }
+        
+        response = await _dio.post(
+          endpoint,
+          data: {
+            'contents': [
+              {
+                'parts': [
+                  {'text': prompt}
+                ]
+              }
+            ],
+            'generationConfig': generationConfig,
+          },
+          options: Options(
+            headers: {
+              'Content-Type': 'application/json',
+            },
+          ),
+        );
+      } else {
+        // For native platforms, use direct API call
+        final endpoint = '/models/${ApiConfig.modelName}:generateContent?key=${ApiConfig.gemmaApiKey}';
+        
+        response = await _dio.post(
+          endpoint,
+          data: {
+            'contents': [
+              {
+                'parts': [
+                  {'text': prompt}
+                ]
+              }
+            ],
+            'generationConfig': generationConfig,
+          },
+          options: Options(
+            headers: {
+              'Content-Type': 'application/json',
+            },
+          ),
+        );
       }
-      
+
       if (response.statusCode == 200) {
         final data = response.data;
         if (data['candidates'] != null && data['candidates'].isNotEmpty) {
-          final content = data['candidates'][0]['content']['parts'][0]['text'];
-          return content.trim();
-        } else {
-          throw Exception('No ${operationType.displayName.toLowerCase()} generated. Response: ${data.toString()}');
+          final content = data['candidates'][0]['content'];
+          if (content != null && content['parts'] != null && content['parts'].isNotEmpty) {
+            final result = content['parts'][0]['text'] ?? 'No response generated';
+            
+            if (kDebugMode) {
+              print('[GemmaService] API response success: ${result.substring(0, result.length < 100 ? result.length : 100)}...');
+            }
+            
+            return result;
+          }
         }
+        throw Exception('Invalid response format from API');
       } else {
         throw Exception('API request failed: ${response.statusMessage} (${response.statusCode})');
       }
-      
     } on DioException catch (e) {
       if (kDebugMode) {
-        print('[GemmaService] DioException: ${e.toString()}');
-        print('[GemmaService] Response data: ${e.response?.data}');
+        print('[GemmaService] DioException: ${e.message}');
+        print('[GemmaService] Error type: ${e.type}');
       }
-      
-      if (e.type == DioExceptionType.connectionTimeout) {
-        throw Exception('Connection timeout. Please check your internet connection.');
-      } else if (e.type == DioExceptionType.receiveTimeout) {
-        throw Exception('Request timeout. Please try again.');
-      } else if (e.response?.statusCode == 400) {
-        final errorData = e.response?.data;
-        if (errorData != null && errorData['error'] != null) {
-          throw Exception('Invalid request: ${errorData['error']['message']}');
-        }
-        throw Exception('Invalid request. Please check your input text.');
-      } else if (e.response?.statusCode == 403) {
-        throw Exception('Invalid API key or quota exceeded. Please check your API key.');
-      } else if (e.response?.statusCode == 429) {
-        throw Exception('Rate limit exceeded. Please try again later.');
-      } else if (e.response?.statusCode == 404) {
-        throw Exception('Model not found. The model "${ApiConfig.modelName}" might not be available.');
-      } else {
-        final errorMessage = e.response?.data?['error']?['message'] ?? e.message;
-        throw Exception('Network error: $errorMessage');
-      }
+      throw Exception('Network/API error: ${e.message}');
     } catch (e) {
       if (kDebugMode) {
         print('[GemmaService] Unexpected error: ${e.toString()}');
       }
       throw Exception('Unexpected error: ${e.toString()}');
-    }
-  }
     }
   }
 

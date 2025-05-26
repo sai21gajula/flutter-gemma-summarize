@@ -5,3 +5,8 @@
 # Xcode-related
 **/dgph
 **/xcuserdata/
+.gitignore
+package-config.json
+package-lock.js
+package-lock.json
+package.json

@@ -4,6 +4,7 @@ import '../models/note.dart';
 import '../services/database_service.dart';
 import '../services/web_storage_service.dart';
 import '../services/gemma_service.dart';
+import '../config/api_config.dart';
 
 class NotesProvider with ChangeNotifier {
   final DatabaseService _databaseService = DatabaseService();
@@ -162,7 +163,8 @@ class NotesProvider with ChangeNotifier {
   // Test API connection
   Future<bool> testApiConnection() async {
     try {
-      return await _gemmaService.testConnection();
+      final result = await _gemmaService.testConnection();
+      return result['success'] ?? false;
     } catch (e) {
       _setError('Connection test failed: ${e.toString()}');
       return false;
@@ -212,7 +214,7 @@ class NotesProvider with ChangeNotifier {
   String getStorageInfo() {
     return 'Platform: ${_isWeb ? 'Web (localStorage)' : 'Native (SQLite)'}\n'
            'Notes count: ${_notes.length}\n'
-           'API configured: ${_gemmaService.testConnection}';
+           'API configured: ${ApiConfig.isApiKeyConfigured}';
   }
 
   // Export notes (for backup/debugging)
